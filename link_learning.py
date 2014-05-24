@@ -3,7 +3,7 @@
 # @Author: jinpf
 # @Date:   2014-05-24 17:15:37
 # @Last Modified by:   jinpf
-# @Last Modified time: 2014-05-24 23:07:30
+# @Last Modified time: 2014-05-24 23:30:04
 # @Email: jpflcj@sina.com
 
 """
@@ -20,7 +20,7 @@ import logging
 
 Switch_Output={}	#Switch_Output={dpid:{mac:port}}
 Swich_Connect_Info={}	#Swich_Connect_Info={dpid1:{dpid2:port1}}
-Host_Info={}	#Host_Info={mac:(dpid,port)}
+Host_Info={}	#Host_Info={mac:(dpid,port)} , record host direct connect switch
 Switch_AntiFlood={}	#Switch_AntiFlood={dpid:[IP1,IP2,...]} , tag for prevent Broadcast radiation
 
 def Install_Flow(event,src,dst,out_port):
@@ -71,6 +71,9 @@ class Link_Learning(object):
 
 	def _handle_PacketIn(self,event):
 		packet = event.parsed
+		if packet.src not in Host_Info:
+			Host_Info[packet.src]=(event.dpid,event.port)
+
 		Switch_Output[event.dpid][packet.src]=event.port
 
 		if packet.find("arp"):
@@ -90,12 +93,13 @@ class Link_Learning(object):
 			msg.in_port=event.port
 			event.connection.send(msg)
 
-			Install_Flow(event,packet.src,packet.dst,Switch_Output[event.dpid][packet.dst])
-			Install_Flow(event,packet.dst,packet.src,Switch_Output[event.dpid][packet.src])
+			# Install_Flow(event,packet.src,packet.dst,Switch_Output[event.dpid][packet.dst])
+			# Install_Flow(event,packet.dst,packet.src,Switch_Output[event.dpid][packet.src])
 
 		print event.dpid,'packet_in:',packet
 		print 'out_put:',Switch_Output
 		print 'Anti',Switch_AntiFlood
+		print 'Host_Info:',Host_Info
 		print
 
 
