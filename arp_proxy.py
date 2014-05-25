@@ -3,7 +3,7 @@
 # @Author: jinpf
 # @Date:   2014-05-19 09:33:07
 # @Last Modified by:   jinpf
-# @Last Modified time: 2014-05-24 17:11:01
+# @Last Modified time: 2014-05-25 22:29:13
 # @Email: jpflcj@sina.com
 
 """
@@ -48,28 +48,28 @@ class Arp_proxy(object):
 			arp_packet=packet.find("arp")
 			IP_To_MAC[arp_packet.protosrc]=packet.src
 			if arp_packet.opcode==arp.REQUEST:
-				# if arp_packet.protodst in IP_To_MAC:	#reply
-				# 	#construct arp reply packet
-				# 	arp_reply=arp()
-				# 	arp_reply.hwsrc=IP_To_MAC[arp_packet.protodst]
-				# 	arp_reply.hwdst=packet.src
-				# 	arp_reply.opcode=arp.REPLY
-				# 	arp_reply.protosrc=arp_packet.protodst
-				# 	arp_reply.protodst=arp_packet.protosrc
-				# 	ether=ethernet()
-				# 	ether.type=ethernet.ARP_TYPE
-				# 	ether.dst=packet.src
-				# 	ether.src=IP_To_MAC[arp_packet.protodst]
-				# 	ether.payload=arp_reply
+				if arp_packet.protodst in IP_To_MAC:	#reply
+					#construct arp reply packet
+					arp_reply=arp()
+					arp_reply.hwsrc=IP_To_MAC[arp_packet.protodst]
+					arp_reply.hwdst=packet.src
+					arp_reply.opcode=arp.REPLY
+					arp_reply.protosrc=arp_packet.protodst
+					arp_reply.protodst=arp_packet.protosrc
+					ether=ethernet()
+					ether.type=ethernet.ARP_TYPE
+					ether.dst=packet.src
+					ether.src=IP_To_MAC[arp_packet.protodst]
+					ether.payload=arp_reply
 
-				# 	# send the created arp reply back to switch
-				# 	msg=of.ofp_packet_out()
-				# 	msg.data=ether.pack()
-				# 	msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
-				# 	msg.in_port=event.port
-				# 	event.connection.send(msg)
+					# send the created arp reply back to switch
+					msg=of.ofp_packet_out()
+					msg.data=ether.pack()
+					msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
+					msg.in_port=event.port
+					event.connection.send(msg)
 
-				# elif (arp_reply.protosrc,arp_packet.protodst) not in Switch_AntiFlood[event.dpid]:	#flood
+				elif (arp_packet.protosrc,arp_packet.protodst) not in Switch_AntiFlood[event.dpid]:	#flood
 					msg=of.ofp_packet_out(data=event.data)
 					msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
 					msg.in_port=event.port
