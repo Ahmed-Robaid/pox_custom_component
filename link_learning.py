@@ -3,7 +3,7 @@
 # @Author: jinpf
 # @Date:   2014-05-24 17:15:37
 # @Last Modified by:   jinpf
-# @Last Modified time: 2014-05-25 22:33:22
+# @Last Modified time: 2014-05-26 15:47:36
 # @Email: jpflcj@sina.com
 
 """
@@ -16,15 +16,59 @@ import pox.openflow.libopenflow_01 as of
 from pox.openflow.discovery import Discovery
 from pox.lib.packet.arp import arp
 from pox.lib.packet.ethernet import ethernet
+from pox.lib.addresses import EthAddr
 from pox.lib.recoco import Timer
 import logging
 
 Swich_Connect_Info={}	#Swich_Connect_Info={dpid1:{dpid2:port1}}
-IP_To_MAC={}	#Mac_To_IP={IP:mac}
-Host_Info={}	#Host_Info={mac:(dpid,port)} , record host direct connect switch
-Switch_AntiFlood={}	#Switch_AntiFlood={dpid:[IP1,IP2,...]} , tag for prevent Broadcast radiation
+IP_To_MAC={}	#IP_To_MAC={IP:mac}
+Host_Info={}	#Host_Info={mac:(dpid,port,ip)} , record host direct connect switch
 
 MAXINT=9999
+Special_MAC=EthAddr('11:11:11:11:11:11')
+
+#when don`t know ip->mac ,flood arp
+def Arp_Flood(arp_packet):
+	#construct arp request packet
+	arp_request=arp()
+	arp_request.hwsrc=arp_packet.hwsrc		#Special_MAC
+	arp_request.hwdst=arp_packet.hwdst		#EthAddr(b"\xff\xff\xff\xff\xff\xff")
+	arp_request.opcode=arp.REQUEST
+	arp_request.protosrc=arp_packet.protosrc
+	arp_request.protodst=arp_packet.protodst
+	ether=ethernet()
+	ether.type=ethernet.ARP_TYPE
+	ether.dst=EthAddr(b"\xff\xff\xff\xff\xff\xff")
+	ether.src=Special_MAC
+	ether.payload=arp_request
+
+	msg=of.ofp_packet_out()
+	msg.data=ether.pack()
+	msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
+	for connection in core.openflow.connections:
+		connection.send(msg)
+
+#when we know ip->mac ,reply
+def Arp_Reply(event,arp_packet):
+	#construct arp reply packet
+	arp_reply=arp()
+	arp_reply.hwsrc=IP_To_MAC[arp_packet.protodst]
+	arp_reply.hwdst=arp_packet.hwsrc
+	arp_reply.opcode=arp.REPLY
+	arp_reply.protosrc=arp_packet.protodst
+	arp_reply.protodst=arp_packet.protosrc
+	ether=ethernet()
+	ether.type=ethernet.ARP_TYPE
+	ether.dst=arp_packet.hwsrc
+	ether.src=IP_To_MAC[arp_packet.protodst]
+	ether.payload=arp_reply
+
+	# send the created arp reply back to switch
+	msg=of.ofp_packet_out()
+	msg.data=ether.pack()
+	msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
+	msg.in_port=event.port
+	event.connection.send(msg)
 
 #compare rule,put in min(),data as tumple,data[1] stands for compare data,if data[0] in list L,data[1] won`t be counted when compare
 def compare_rule(data,L):
@@ -60,7 +104,7 @@ def Dijkstra(start,end):
 		Used_Sw.append(min_sw)
 		mstart=min_sw
 
-	print path[end]
+	print 'path :',start,'->',end,' : ',path[end]
 	return path[end]
 
 #install flow on path switch
@@ -104,10 +148,8 @@ def Install_Path_Flow(src,dst,event=None):
 		event.connection.send(msg)
 
 
-def _handle_timer(message):
-	for dpid in Switch_AntiFlood:
-		Switch_AntiFlood[dpid]=[]
-
+# def _handle_timer(message):
+# 	pass
 
 class Link_Learning(object):
 	def __init__(self):
@@ -133,61 +175,41 @@ class Link_Learning(object):
 				del Swich_Connect_Info[dpid2][dpid1]
 				#remain to do some work
 
-		print Swich_Connect_Info
+		# print Swich_Connect_Info
 
 	def _handle_ConnectionUp(self,event):
-		Switch_AntiFlood[event.dpid]=[]
+		pass
 
 	def _handle_ConnectionDown(self,event):
-		del Switch_AntiFlood[event.dpid]
 		del Swich_Connect_Info[event.dpid]
 
 	def _handle_PacketIn(self,event):
 		packet = event.parsed
-		if packet.src not in Host_Info:
-			Host_Info[packet.src]=(event.dpid,event.port)
 
-		if packet.find("arp"):
-			arp_packet=packet.find("arp")
-			IP_To_MAC[arp_packet.protosrc]=packet.src
-			if arp_packet.opcode==arp.REQUEST:
-				if arp_packet.protodst in IP_To_MAC:	#reply
-					#construct arp reply packet
-					arp_reply=arp()
-					arp_reply.hwsrc=IP_To_MAC[arp_packet.protodst]
-					arp_reply.hwdst=packet.src
-					arp_reply.opcode=arp.REPLY
-					arp_reply.protosrc=arp_packet.protodst
-					arp_reply.protodst=arp_packet.protosrc
-					ether=ethernet()
-					ether.type=ethernet.ARP_TYPE
-					ether.dst=packet.src
-					ether.src=IP_To_MAC[arp_packet.protodst]
-					ether.payload=arp_reply
-
-					# send the created arp reply back to switch
-					msg=of.ofp_packet_out()
-					msg.data=ether.pack()
-					msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
-					msg.in_port=event.port
-					event.connection.send(msg)
-
-				elif (arp_packet.protosrc,arp_packet.protodst) not in Switch_AntiFlood[event.dpid]:	#flood
-					msg=of.ofp_packet_out(data=event.data)
-					msg.actions.append(of.ofp_action_output(port=of.OFPP_FLOOD))
-					msg.in_port=event.port
-					event.connection.send(msg)
-					Switch_AntiFlood[event.dpid].append((arp_packet.protosrc,arp_packet.protodst) )
+		if packet.src!=Special_MAC:	#filt  packet send by ourself
+			if packet.find("arp"):
+				arp_packet=packet.find("arp")
+				# print  'switch:',event.dpid,'packet_in:','arp_packet:',arp_packet
+				Host_Info[packet.src]=(event.dpid,event.port,arp_packet.protosrc)
+				IP_To_MAC[arp_packet.protosrc]=packet.src
+				if arp_packet.opcode==arp.REQUEST:
+					if arp_packet.protodst in IP_To_MAC:
+						Arp_Reply(event,arp_packet)
+					else:
+						Arp_Flood(arp_packet)
 
 		if (packet.src in Host_Info) and (packet.dst in Host_Info):
-			Install_Path_Flow(packet.src,packet.dst)
+			Install_Path_Flow(packet.src,packet.dst,event)
 
 		
-		print event.dpid,'packet_in:',packet
-		print 'IP to MAC',IP_To_MAC
-		# print 'Anti',Switch_AntiFlood
-		print 'Host_Info:',Host_Info
-		print
+		# if packet.find('ipv4'):
+		# 	ip_packet=packet.find('ipv4')
+		# 	print 'switch:',event.dpid,'packet_in:','ip:',ip_packet
+		
+		# print 'switch:',event.dpid,'packet_in:',packet
+		# print 'IP to MAC',IP_To_MAC
+		# print 'Host_Info:',Host_Info
+		# print
 
 
 def launch():
@@ -195,4 +217,4 @@ def launch():
 	core.getLogger("packet").setLevel(logging.ERROR)
 	core.registerNew(Discovery,explicit_drop=False,install_flow = False)
 	core.registerNew(Link_Learning)
-	Timer(30,_handle_timer,recurring=True,args=["Timer1 come! Switches,give me your stats!"])
+	# Timer(30,_handle_timer,recurring=True,args=["Timer1 come!])
